@@ -72,19 +72,31 @@ jobs:
           fi
 
           mkdir -p TMessagesProj/src/main/java/org/telegram/pampgram
-          # components/<Name>/Sources is copied to .../pampgram/<name>/.
-          # In stage 0 the Sources dirs don't exist yet, so this loop skips.
+          # Each component ships its Sources/ as a flat set of .java files; we
+          # copy them into the target subpackage keyed by component name. The
+          # mapping is explicit (not a lowercase-of-dirname) so the package
+          # path and the iOS-mirroring component name can evolve independently.
+          declare -A PAMPGRAM_COMPONENT_PACKAGE=(
+            [PampGramCore]=core
+            [PampGramSettingsUI]=settings
+            [PhantomGiftKit]=gifts
+          )
           for comp in ../pampgram/mod/components/*/Sources; do
-            if [ -d "$comp" ]; then
-              name=$(basename "$(dirname "$comp")" | tr '[:upper:]' '[:lower:]')
-              dest=TMessagesProj/src/main/java/org/telegram/pampgram/$name
-              mkdir -p "$dest"
-              cp -R "$comp"/. "$dest"/
-              echo "component copied: $name"
+            [ -d "$comp" ] || continue
+            name=$(basename "$(dirname "$comp")")
+            pkg="${PAMPGRAM_COMPONENT_PACKAGE[$name]:-}"
+            if [ -z "$pkg" ]; then
+              echo "FAIL: no package mapping for component '$name'; add it to PAMPGRAM_COMPONENT_PACKAGE."
+              exit 1
             fi
+            dest=TMessagesProj/src/main/java/org/telegram/pampgram/$pkg
+            mkdir -p "$dest"
+            cp -R "$comp"/. "$dest"/
+            echo "component copied: $name -> $pkg"
           done
 
           python3 ../pampgram/mod/apply-profile-visuals.py
+          python3 ../pampgram/mod/apply-settings-entry.py
 
           # Casino bridge: inject URL/token into the build copy only, never into
           # git. Mirrors the iOS workflow. In stage 0 the target file doesn't

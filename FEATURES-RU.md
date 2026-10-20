@@ -5,10 +5,14 @@
 
 ## Этапы
 
-- **Этап 0 (сейчас)** — скелет репозитория, CI, пустой патч, пустые модули.
-  Workflow собирает чистый APK Telegram-Android.
-- **Этап 1** — локальная БД PampGram на Android (Room/SQLite) + базовые экраны
-  настроек PampGram в `PampGramSettingsUI`.
+- **Этап 0** — скелет репозитория, CI, пустой патч, пустые модули. Workflow
+  собирает чистый APK Telegram-Android.
+- **Этап 1 (сейчас)** — локальная БД PampGram (`PampGramStorage` на
+  `SQLiteOpenHelper`), хаб настроек PampGram (`PampGramSettingsActivity`) и
+  anchor-checked интеграция точки входа в `ProfileActivity` (строка
+  «PampGram» сразу под «Language»). Разделы с подарками, визуалом профиля,
+  Ghost, внешним видом и casino bridge — placeholder-строки, подробности
+  появятся на следующих этапах.
 - **Этап 2** — Подарки: визуальные Stars/TON/рубли, коллекция, маркет, история.
 - **Этап 3** — Визуальный +888 и визуальный рейтинг (anchor-патчи в
   `ProfileActivity`).

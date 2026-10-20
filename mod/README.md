@@ -12,9 +12,16 @@
   - `PampGramCore` — локальная БД, модели, бизнес-логика.
   - `PampGramSettingsUI` — экраны настроек PampGram.
   - `PhantomGiftKit` — локальные подарки, визуальные балансы, casino bridge.
-- `apply-profile-visuals.py` — anchor-checked post-patch для
-  `ProfileActivity.java`. Запускается после базового патча; падает, если якорь
-  не найден (значит, upstream разъехался и правку надо обновить).
+- `apply-settings-entry.py` — anchor-checked post-patch, который добавляет
+  строку «PampGram» в экран настроек (`ProfileActivity.java`) и подключает к
+  ней `PampGramSettingsActivity`. Все 7 правок (field, reset, rowCount,
+  onItemClick, render, isEnabled, getItemViewType) идемпотентны и падают
+  громко, если якорь не найден (значит, upstream разъехался).
+- `apply-profile-visuals.py` — такой же anchor-checked post-patch, но для
+  визуальных правок самого профиля (`+888`, рейтинг). Пустая заглушка в
+  этапе 1; будет заполнен в этапе 3.
 
-Пока все три компонента — пустые пакеты с `package-info.java` и BUILD-маркером,
-чтобы Gradle видел их как источники. Код добавится в этапах 1-6.
+Этап 1: заполнены `PampGramCore` (локальная БД на `SQLiteOpenHelper`:
+балансы, история, визуальный профиль) и `PampGramSettingsUI` (hub-экран с
+placeholder-разделами для будущих этапов). `PhantomGiftKit` всё ещё пустой —
+наполнится в этапе 2.
