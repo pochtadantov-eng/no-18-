@@ -1,0 +1,254 @@
+name: Build APK (debug-signed)
+
+# Manual only. Stage 0: the mod/telegram-android.patch is empty and the
+# components/ packages are stubs, so this builds vanilla Telegram-Android to
+# prove the CI chain works end-to-end. Later stages add the actual mod.
+on:
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Check out PampGram-Android (patch + components)
+        uses: actions/checkout@v4
+        with:
+          path: pampgram
+
+      - name: Check out Telegram-Android
+        run: |
+          # Shallow + submodules. DrKLO/Telegram keeps a few native deps as
+          # submodules (libwebp, libtgvoip, ffmpeg wrappers); without
+          # --recursive the Gradle configuration fails on missing CMake sources.
+          git clone --recursive --shallow-submodules --depth 1 -j8 \
+            https://github.com/DrKLO/Telegram.git telegram-android
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      # DrKLO/Telegram pins its NDK version inside TMessagesProj/build.gradle
+      # (ndkVersion "..."). setup-android installs the SDK; we install the NDK
+      # with sdkmanager so a mismatch between the hosted-runner default and the
+      # pinned version fails loudly instead of silently falling back.
+      - name: Install Android NDK pinned by Telegram-Android
+        run: |
+          set -euo pipefail
+          NDK_VERSION=$(grep -E 'ndkVersion\s*' telegram-android/TMessagesProj/build.gradle \
+            | head -n1 | sed -E 's/.*ndkVersion\s*=?\s*["'"'"']([^"'"'"']+)["'"'"'].*/\1/')
+          if [ -z "$NDK_VERSION" ]; then
+            echo "FAIL: could not read ndkVersion from TMessagesProj/build.gradle"
+            exit 1
+          fi
+          echo "Telegram-Android pins NDK $NDK_VERSION"
+          yes | sdkmanager --install "ndk;$NDK_VERSION" >/dev/null
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+
+      # mod/components/* become whole new Java packages, dropped in as-is under
+      # org.telegram.pampgram.*; mod/telegram-android.patch only touches files
+      # that already exist upstream. Keeping the two apart means editing our
+      # own Kotlin/Java never requires regenerating the patch.
+      - name: Apply the PampGram patch
+        working-directory: telegram-android
+        env:
+          CASINO_BRIDGE_URL: ${{ secrets.CASINO_BRIDGE_URL }}
+          CASINO_BRIDGE_TOKEN: ${{ secrets.CASINO_BRIDGE_TOKEN }}
+        run: |
+          set -euo pipefail
+          # The patch is a plain unified diff with a header comment that
+          # `git apply` tolerates. An empty-of-hunks patch is a no-op; a
+          # malformed one fails --check loudly here instead of mid-build.
+          if grep -q '^diff --git ' ../pampgram/mod/telegram-android.patch; then
+            git apply --check ../pampgram/mod/telegram-android.patch
+            git apply ../pampgram/mod/telegram-android.patch
+          else
+            echo "mod/telegram-android.patch has no diff hunks yet (stage 0); skipping apply."
+          fi
+
+          mkdir -p TMessagesProj/src/main/java/org/telegram/pampgram
+          # components/<Name>/Sources is copied to .../pampgram/<name>/.
+          # In stage 0 the Sources dirs don't exist yet, so this loop skips.
+          for comp in ../pampgram/mod/components/*/Sources; do
+            if [ -d "$comp" ]; then
+              name=$(basename "$(dirname "$comp")" | tr '[:upper:]' '[:lower:]')
+              dest=TMessagesProj/src/main/java/org/telegram/pampgram/$name
+              mkdir -p "$dest"
+              cp -R "$comp"/. "$dest"/
+              echo "component copied: $name"
+            fi
+          done
+
+          python3 ../pampgram/mod/apply-profile-visuals.py
+
+          # Casino bridge: inject URL/token into the build copy only, never into
+          # git. Mirrors the iOS workflow. In stage 0 the target file doesn't
+          # exist yet, so this is a no-op.
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          p = Path("TMessagesProj/src/main/java/org/telegram/pampgram/phantomgiftkit/PampGramCasinoBridge.java")
+          if not p.exists():
+              print("casino bridge: target file not present yet (stage 0); nothing to fill.")
+              raise SystemExit(0)
+          s = p.read_text()
+          url = os.environ.get("CASINO_BRIDGE_URL", "").strip().rstrip("/")
+          tok = os.environ.get("CASINO_BRIDGE_TOKEN", "").strip()
+          if url and tok and all(c.isalnum() or c in ":/.-_" for c in url) and tok.isalnum():
+              s = s.replace('private static final String BASE_URL = "";', f'private static final String BASE_URL = "{url}";')
+              s = s.replace('private static final String TOKEN = "";',    f'private static final String TOKEN = "{tok}";')
+              p.write_text(s)
+              print("casino bridge: enabled")
+          else:
+              print("casino bridge: off (secrets not set or not URL-safe)")
+          PY
+
+          ls -1 TMessagesProj/src/main/java/org/telegram/pampgram || true
+
+      # Telegram-Android reads APP_ID / APP_HASH from
+      # TMessagesProj/src/main/java/org/telegram/messenger/BuildVars.java.
+      # Repo secrets TELEGRAM_API_ID / TELEGRAM_API_HASH are injected into the
+      # build copy only; the public pair 8 / 7245de8e... is Telegram's own and
+      # will have accounts limited if used by a third-party build.
+      - name: Write build configuration
+        working-directory: telegram-android
+        env:
+          TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID || '8' }}
+          TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH || '7245de8e747a0d6fbe11f7cc14fcc0bb' }}
+          ALLOW_PUBLIC_API_KEYS: ${{ vars.ALLOW_PUBLIC_API_KEYS }}
+        run: |
+          set -euo pipefail
+
+          if [ "$TELEGRAM_API_ID" = "8" ]; then
+            if [ "$ALLOW_PUBLIC_API_KEYS" = "true" ]; then
+              echo "WARNING: building with Telegram's public api_id 8 (ALLOW_PUBLIC_API_KEYS=true)."
+              echo "Signing in to this build risks the account being limited."
+            else
+              echo "FAIL: secret TELEGRAM_API_ID is not set, so the build would fall back to"
+              echo "Telegram's public api_id 8 and put the account at risk."
+              echo "Add it under Settings -> Secrets and variables -> Actions -> Repository secrets."
+              echo "To build with the public pair on purpose, set repo variable ALLOW_PUBLIC_API_KEYS=true."
+              exit 1
+            fi
+          else
+            API_ID="$(printf '%s' "$TELEGRAM_API_ID" | tr -d '[:space:]')"
+            API_HASH="$(printf '%s' "$TELEGRAM_API_HASH" | tr -d '[:space:]')"
+            if [[ ! "$API_ID" =~ ^[0-9]+$ ]]; then
+              echo "FAIL: TELEGRAM_API_ID must be digits only."
+              exit 1
+            fi
+            if [[ ! "$API_HASH" =~ ^[0-9a-fA-F]{32}$ ]]; then
+              echo "FAIL: TELEGRAM_API_HASH is not a valid api_hash (expected 32 hex chars)."
+              exit 1
+            fi
+            TELEGRAM_API_ID="$API_ID"
+            TELEGRAM_API_HASH="$API_HASH"
+            echo "OK: using your own api_id (${#API_ID} digits) and api_hash (32 hex)."
+          fi
+
+          BV=TMessagesProj/src/main/java/org/telegram/messenger/BuildVars.java
+          test -f "$BV" || { echo "FAIL: $BV not found"; exit 1; }
+          # Patch APP_ID (int) and APP_HASH (String) in place. The upstream
+          # declarations are "public static int APP_ID = ..." and
+          # "public static String APP_HASH = \"...\"".
+          python3 - <<PY
+          import re, pathlib
+          p = pathlib.Path("$BV")
+          s = p.read_text()
+          s = re.sub(r'(public\s+static\s+(?:final\s+)?int\s+APP_ID\s*=\s*)\d+', r'\g<1>${TELEGRAM_API_ID}', s)
+          s = re.sub(r'(public\s+static\s+(?:final\s+)?String\s+APP_HASH\s*=\s*)"[^"]*"', r'\g<1>"${TELEGRAM_API_HASH}"', s)
+          p.write_text(s)
+          PY
+          echo "BuildVars.java patched (values not printed)."
+
+      # Firebase / Google Services are optional at runtime but
+      # TMessagesProj/build.gradle applies the google-services plugin, which
+      # fails configuration without a google-services.json. A minimally valid
+      # stub keeps Gradle happy; push notifications simply don't work in this
+      # build, which is fine for a dev / sideloaded APK.
+      - name: Write stub google-services.json
+        working-directory: telegram-android
+        run: |
+          cat > TMessagesProj/google-services.json <<'EOF'
+          {
+            "project_info": {
+              "project_number": "000000000000",
+              "project_id": "pampgram-stub",
+              "storage_bucket": "pampgram-stub.appspot.com"
+            },
+            "client": [
+              {
+                "client_info": {
+                  "mobilesdk_app_id": "1:000000000000:android:0000000000000000000000",
+                  "android_client_info": { "package_name": "org.telegram.messenger" }
+                },
+                "oauth_client": [],
+                "api_key": [ { "current_key": "AIzaSyAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" } ],
+                "services": { "appinvite_service": { "other_platform_oauth_client": [] } }
+              }
+            ],
+            "configuration_version": "1"
+          }
+          EOF
+
+      # Generate a fresh debug keystore in-job. Credentials never leave the
+      # runner. The resulting APK is debug-signed, which Android installs
+      # directly from "Install from unknown sources" — no Sideloadly needed.
+      - name: Generate debug keystore
+        working-directory: telegram-android
+        run: |
+          set -euo pipefail
+          mkdir -p TMessagesProj/config
+          keytool -genkey -v \
+            -keystore TMessagesProj/config/debug.keystore \
+            -storepass android -keypass android \
+            -alias androiddebugkey \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -dname "CN=PampGram Debug,O=PampGram,C=RU"
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-telegram-android-${{ hashFiles('telegram-android/**/*.gradle', 'telegram-android/**/gradle-wrapper.properties') }}
+          restore-keys: |
+            gradle-telegram-android-
+
+      - name: Build APK (afat / release-with-debug-signing)
+        working-directory: telegram-android
+        run: |
+          set -euo pipefail
+          chmod +x gradlew
+          # afatRelease is the universal multi-ABI APK flavor DrKLO/Telegram
+          # ships; it installs on every supported Android device. We sign it
+          # with the debug keystore generated above so there's nothing to
+          # provision — the APK is ready to sideload as-is.
+          ./gradlew \
+            -Pandroid.injected.signing.store.file="$(pwd)/TMessagesProj/config/debug.keystore" \
+            -Pandroid.injected.signing.store.password=android \
+            -Pandroid.injected.signing.key.alias=androiddebugkey \
+            -Pandroid.injected.signing.key.password=android \
+            :TMessagesProj:assembleAfatRelease
+
+      - name: Show what was produced
+        if: always()
+        working-directory: telegram-android
+        run: |
+          echo "--- APK candidates ---"
+          find TMessagesProj/build/outputs/apk -type f -name '*.apk' -printf '%p\t%s bytes\n' || true
+
+      - name: Upload APK
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: PampGram-apk
+          path: telegram-android/TMessagesProj/build/outputs/apk/afat/release/*.apk
+          if-no-files-found: warn
+          retention-days: 14

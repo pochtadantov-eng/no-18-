@@ -1,0 +1,12 @@
+# PampGram patch for Telegram-Android.
+#
+# Stage 0: empty. The workflow still runs `git apply --check` on this file to
+# make sure the format stays valid as patches are added in later stages.
+#
+# When adding changes:
+#   cd telegram-android
+#   # make edits
+#   git diff --no-color > ../no-18-/mod/telegram-android.patch
+#
+# The patch MUST only touch files that already exist in upstream. Whole new
+# files go under mod/components/ and are copied in at build time.
