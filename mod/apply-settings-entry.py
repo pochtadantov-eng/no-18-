@@ -1,11 +1,23 @@
 #!/usr/bin/env python3
-"""Anchor-checked integration of the PampGram settings entry into ProfileActivity.
+"""Anchor-checked integration of the PampGram settings entry.
 
-Why anchor-based and not a unified-diff patch: ProfileActivity.java is ~14k
-lines and churns upstream. A line-numbered patch would break every few weeks.
-Anchor edits key off stable code fragments (specific field declarations and
-if-chains) and fail loudly when the shape changes, so a mismatch surfaces here
-instead of mid-build or, worse, as silently-missing UI.
+Why anchor-based and not a unified-diff patch: the files we touch are ~14k and
+~10k lines, and they churn upstream. A line-numbered patch would break every
+few weeks. Anchor edits key off stable code fragments and fail loudly when the
+shape changes, so a mismatch surfaces here instead of mid-build or, worse, as
+silently-missing UI.
+
+Two files are patched:
+
+1. SettingsActivity.java — the main Settings surface in the current UI. The
+   drawer "Settings" entry opens this one. We add a tile labelled "PampGram"
+   just under Language and wire its switch case to PampGramSettingsActivity.
+   This is the entry users actually see today.
+
+2. ProfileActivity.java — the older "own-profile" settings surface. It is
+   still reachable by other code paths ("View my profile", some bulletins),
+   so we add the same row there too. If one UI path shows the row, the other
+   is covered.
 
 Every edit is idempotent — re-running on an already-patched tree is a no-op.
 Any anchor missing is a hard failure, no silent skip.
@@ -29,6 +41,17 @@ PROFILE_ACTIVITY = (
     / "telegram"
     / "ui"
     / "ProfileActivity.java"
+)
+SETTINGS_ACTIVITY = (
+    TELEGRAM_ROOT
+    / "TMessagesProj"
+    / "src"
+    / "main"
+    / "java"
+    / "org"
+    / "telegram"
+    / "ui"
+    / "SettingsActivity.java"
 )
 
 
@@ -62,10 +85,56 @@ def _apply_regex(src: str, marker: str, pattern: str, replacement: str, where: s
     return new_src
 
 
-def main() -> int:
+def _patch_settings_activity() -> None:
+    """Add a 'PampGram' tile and dispatch case to SettingsActivity.java."""
+    if not SETTINGS_ACTIVITY.exists():
+        raise SystemExit(f"FAIL: {SETTINGS_ACTIVITY} not found; is the working directory telegram-android?")
+
+    s = SETTINGS_ACTIVITY.read_text()
+
+    # 1. Insert the PampGram tile right after the Language tile (id=10).
+    #    settings_gift is already in R.drawable (used by Telegram's gifts UI),
+    #    so no new resource is needed.
+    s = _apply_once(
+        s,
+        marker="SettingCell.Factory.of(100,",
+        anchor="        items.add(SettingCell.Factory.of(10, IconBackgroundColors.PURPLE.top, IconBackgroundColors.PURPLE.bottom, R.drawable.settings_language, getString(R.string.SettingsLanguage), LocaleController.getCurrentLanguageName()));\n",
+        replacement=(
+            "        items.add(SettingCell.Factory.of(10, IconBackgroundColors.PURPLE.top, IconBackgroundColors.PURPLE.bottom, R.drawable.settings_language, getString(R.string.SettingsLanguage), LocaleController.getCurrentLanguageName()));\n"
+            "        items.add(SettingCell.Factory.of(100, 0xFFFF6B9D, 0xFFC44569, R.drawable.settings_gift, \"PampGram\"));\n"
+        ),
+        where="SettingsActivity items.add() block",
+    )
+
+    # 2. Add the dispatch case right after case 10 (Language). We use id 100 to
+    #    keep clear of upstream's 1..18 range.
+    s = _apply_once(
+        s,
+        marker="case 100:",
+        anchor=(
+            "            case 10:\n"
+            "                presentSettingFragment(new LanguageSelectActivity());\n"
+            "                break;\n"
+        ),
+        replacement=(
+            "            case 10:\n"
+            "                presentSettingFragment(new LanguageSelectActivity());\n"
+            "                break;\n"
+            "            case 100:\n"
+            "                presentSettingFragment(new org.telegram.pampgram.settings.PampGramSettingsActivity());\n"
+            "                break;\n"
+        ),
+        where="SettingsActivity switch dispatch",
+    )
+
+    SETTINGS_ACTIVITY.write_text(s)
+    print("apply-settings-entry: SettingsActivity.java — 2 anchor edits applied (or already in place).")
+
+
+def _patch_profile_activity() -> None:
+    """Add a 'PampGram' row to the legacy ProfileActivity settings surface."""
     if not PROFILE_ACTIVITY.exists():
-        print(f"FAIL: {PROFILE_ACTIVITY} not found; is the working directory telegram-android?")
-        return 1
+        raise SystemExit(f"FAIL: {PROFILE_ACTIVITY} not found; is the working directory telegram-android?")
 
     s = PROFILE_ACTIVITY.read_text()
 
@@ -152,7 +221,12 @@ def main() -> int:
     )
 
     PROFILE_ACTIVITY.write_text(s)
-    print("apply-settings-entry: 7 anchor edits applied (or already in place).")
+    print("apply-settings-entry: ProfileActivity.java — 7 anchor edits applied (or already in place).")
+
+
+def main() -> int:
+    _patch_settings_activity()
+    _patch_profile_activity()
     return 0
 
 
