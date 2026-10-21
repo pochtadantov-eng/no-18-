@@ -191,50 +191,12 @@ jobs:
           PY
           echo "BuildVars.java patched (values not printed)."
 
-      # Firebase / Google Services are optional at runtime but
-      # TMessagesProj/build.gradle applies the google-services plugin, which
-      # fails configuration without a google-services.json. A minimally valid
-      # stub keeps Gradle happy; push notifications simply don't work in this
-      # build, which is fine for a dev / sideloaded APK.
-      - name: Write stub google-services.json
-        working-directory: telegram-android
-        run: |
-          cat > TMessagesProj/google-services.json <<'EOF'
-          {
-            "project_info": {
-              "project_number": "000000000000",
-              "project_id": "pampgram-stub",
-              "storage_bucket": "pampgram-stub.appspot.com"
-            },
-            "client": [
-              {
-                "client_info": {
-                  "mobilesdk_app_id": "1:000000000000:android:0000000000000000000000",
-                  "android_client_info": { "package_name": "org.telegram.messenger" }
-                },
-                "oauth_client": [],
-                "api_key": [ { "current_key": "AIzaSyAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" } ],
-                "services": { "appinvite_service": { "other_platform_oauth_client": [] } }
-              }
-            ],
-            "configuration_version": "1"
-          }
-          EOF
-
-      # Generate a fresh debug keystore in-job. Credentials never leave the
-      # runner. The resulting APK is debug-signed, which Android installs
-      # directly from "Install from unknown sources" — no Sideloadly needed.
-      - name: Generate debug keystore
-        working-directory: telegram-android
-        run: |
-          set -euo pipefail
-          mkdir -p TMessagesProj/config
-          keytool -genkey -v \
-            -keystore TMessagesProj/config/debug.keystore \
-            -storepass android -keypass android \
-            -alias androiddebugkey \
-            -keyalg RSA -keysize 2048 -validity 10000 \
-            -dname "CN=PampGram Debug,O=PampGram,C=RU"
+      # DrKLO/Telegram already ships a dummy release.keystore at
+      # TMessagesProj/config/release.keystore, dummy google-services.json files
+      # at every app module, and the matching RELEASE_* passwords in
+      # gradle.properties (android/androidkey/android). So there is nothing to
+      # provision — Gradle picks all of it up on its own. We only need to kick
+      # off the build.
 
       - name: Cache Gradle
         uses: actions/cache@v4
@@ -246,34 +208,32 @@ jobs:
           restore-keys: |
             gradle-telegram-android-
 
-      - name: Build APK (afat / release-with-debug-signing)
+      - name: Build APK (:TMessagesProj_AppStandalone:assembleAfatDebug)
         working-directory: telegram-android
         run: |
           set -euo pipefail
           chmod +x gradlew
-          # afatRelease is the universal multi-ABI APK flavor DrKLO/Telegram
-          # ships; it installs on every supported Android device. We sign it
-          # with the debug keystore generated above so there's nothing to
-          # provision — the APK is ready to sideload as-is.
-          ./gradlew \
-            -Pandroid.injected.signing.store.file="$(pwd)/TMessagesProj/config/debug.keystore" \
-            -Pandroid.injected.signing.store.password=android \
-            -Pandroid.injected.signing.key.alias=androiddebugkey \
-            -Pandroid.injected.signing.key.password=android \
-            :TMessagesProj:assembleAfatRelease
+          # :TMessagesProj (the library) has no assemble task — the installable
+          # apps live in sibling modules. :TMessagesProj_AppStandalone is the
+          # sideload-oriented one (app id org.telegram.messenger.web, standalone
+          # manifest). Its `afatDebug` variant is the universal multi-ABI APK
+          # with no ProGuard, so it builds fast and is directly installable from
+          # Android's "Install from unknown sources". For a production build
+          # swap in `assembleAfatStandalone`, which turns ProGuard on.
+          ./gradlew :TMessagesProj_AppStandalone:assembleAfatDebug
 
       - name: Show what was produced
         if: always()
         working-directory: telegram-android
         run: |
           echo "--- APK candidates ---"
-          find TMessagesProj/build/outputs/apk -type f -name '*.apk' -printf '%p\t%s bytes\n' || true
+          find TMessagesProj_AppStandalone/build/outputs/apk -type f -name '*.apk' -printf '%p\t%s bytes\n' || true
 
       - name: Upload APK
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: PampGram-apk
-          path: telegram-android/TMessagesProj/build/outputs/apk/afat/release/*.apk
+          path: telegram-android/TMessagesProj_AppStandalone/build/outputs/apk/afat/debug/*.apk
           if-no-files-found: warn
           retention-days: 14
