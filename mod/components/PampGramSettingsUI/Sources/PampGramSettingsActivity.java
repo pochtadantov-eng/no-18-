@@ -1,6 +1,13 @@
 package org.telegram.pampgram.settings;
 
+import static org.telegram.messenger.AndroidUtilities.dp;
+
 import android.content.Context;
+import android.graphics.Color;
+import android.graphics.PorterDuff;
+import android.graphics.drawable.Drawable;
+import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.LayerDrawable;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
@@ -10,6 +17,7 @@ import androidx.recyclerview.widget.DefaultItemAnimator;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
+import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.R;
 import org.telegram.ui.ActionBar.ActionBar;
 import org.telegram.ui.ActionBar.BaseFragment;
@@ -17,6 +25,7 @@ import org.telegram.ui.ActionBar.Theme;
 import org.telegram.ui.Cells.HeaderCell;
 import org.telegram.ui.Cells.TextCell;
 import org.telegram.ui.Cells.TextInfoPrivacyCell;
+import org.telegram.ui.Components.BulletinFactory;
 import org.telegram.ui.Components.CubicBezierInterpolator;
 import org.telegram.ui.Components.LayoutHelper;
 import org.telegram.ui.Components.RecyclerListView;
@@ -24,39 +33,73 @@ import org.telegram.ui.Components.RecyclerListView;
 import java.util.ArrayList;
 import java.util.List;
 
-// PampGram settings hub. Entry row is wired into ProfileActivity by
-// mod/apply-settings-entry.py (anchor-checked). Stage 1: only the hub shell
-// with placeholder rows — stages 2..6 will replace each "coming soon" row
-// with its real subscreen.
+// PampGram settings hub. Mirrors the iOS PampGramHubScreen layout: a header,
+// a single column of 9 section tiles with iOS-matching colors and subtitles,
+// and a team footer. Each tile's functional subscreen is a separate port and
+// lands in its own later stage; for now every tile shows a "coming soon"
+// bulletin.
 public final class PampGramSettingsActivity extends BaseFragment {
 
-    private static final int VIEW_TYPE_HEADER = 0;
-    private static final int VIEW_TYPE_TEXT = 1;
-    private static final int VIEW_TYPE_INFO = 2;
+    private static final int VIEW_TYPE_HEADER_INFO = 0;
+    private static final int VIEW_TYPE_SECTION = 1;
+    private static final int VIEW_TYPE_FOOTER = 2;
+
+    // iOS palette taken from PampGramHubScreen.swift so the Android build keeps
+    // visual parity when a user has both devices open.
+    private static final int COLOR_GIFTS       = 0xFF8E44EC; // purple
+    private static final int COLOR_CHATS       = 0xFF3B82F6; // blue
+    private static final int COLOR_GHOST       = 0xFF34C759; // iOS green
+    private static final int COLOR_APPEARANCE  = 0xFFFF9500; // iOS orange
+    private static final int COLOR_ADVANCED    = 0xFF8E8E93; // iOS gray
+    private static final int COLOR_ADMIN       = 0xFFFF3B30; // iOS red
+    private static final int COLOR_AUTOMOD     = 0xFF30B050; // green shield
+    private static final int COLOR_CALL_RECORD = 0xFFFF3B30; // iOS red
+    private static final int COLOR_PERFORMANCE = 0xFFFFCC00; // iOS yellow
 
     private final List<Row> rows = new ArrayList<>();
 
     private static final class Row {
         final int viewType;
-        final String text;
-        final boolean enabled;
-        final int id;
+        final int iconRes;
+        final int iconBg;
+        final String title;
+        final String subtitle;
+        final int sectionId;
 
-        Row(int viewType, String text, boolean enabled, int id) {
+        Row(int viewType, int iconRes, int iconBg, String title, String subtitle, int sectionId) {
             this.viewType = viewType;
-            this.text = text;
-            this.enabled = enabled;
-            this.id = id;
+            this.iconRes = iconRes;
+            this.iconBg = iconBg;
+            this.title = title;
+            this.subtitle = subtitle;
+            this.sectionId = sectionId;
+        }
+
+        static Row header(String subtitle) {
+            return new Row(VIEW_TYPE_HEADER_INFO, 0, 0, null, subtitle, 0);
+        }
+
+        static Row section(int iconRes, int iconBg, String title, String subtitle, int id) {
+            return new Row(VIEW_TYPE_SECTION, iconRes, iconBg, title, subtitle, id);
+        }
+
+        static Row footer(String text) {
+            return new Row(VIEW_TYPE_FOOTER, 0, 0, null, text, 0);
         }
     }
 
-    // Row ids are opaque — kept as named constants only so onItemClick stays
-    // readable when stages 2..6 fill them in with real presentFragment calls.
-    private static final int ID_GIFTS = 10;
-    private static final int ID_VISUAL_PROFILE = 20;
-    private static final int ID_GHOST = 30;
-    private static final int ID_APPEARANCE = 40;
-    private static final int ID_CASINO_BRIDGE = 50;
+    // Section ids: free-form, used only by onItemClick to decide where to go.
+    // Each stage will replace its own "coming soon" bulletin with a
+    // presentFragment call to the real screen.
+    private static final int ID_GIFTS       = 1;
+    private static final int ID_CHATS       = 2;
+    private static final int ID_GHOST       = 3;
+    private static final int ID_APPEARANCE  = 4;
+    private static final int ID_ADVANCED    = 5;
+    private static final int ID_ADMIN       = 6;
+    private static final int ID_AUTOMOD     = 7;
+    private static final int ID_CALL_RECORD = 8;
+    private static final int ID_PERFORMANCE = 9;
 
     @Override
     public View createView(Context context) {
@@ -89,9 +132,8 @@ public final class PampGramSettingsActivity extends BaseFragment {
         listView.setOnItemClickListener((view, position) -> {
             if (position < 0 || position >= rows.size()) return;
             Row row = rows.get(position);
-            if (!row.enabled) return;
-            // Stage 1: no subscreens are built yet. Each stage flips the matching
-            // row's `enabled` flag to true and presents its own fragment here.
+            if (row.viewType != VIEW_TYPE_SECTION) return;
+            handleSectionClick(row);
         });
 
         rebuildRows();
@@ -100,36 +142,49 @@ public final class PampGramSettingsActivity extends BaseFragment {
 
     private void rebuildRows() {
         rows.clear();
+        rows.add(Row.header("Расширяй. Скрывай. Контролируй."));
 
-        rows.add(new Row(VIEW_TYPE_HEADER, "Подарки", false, 0));
-        rows.add(new Row(VIEW_TYPE_TEXT, "Подарки и балансы (этап 2)", false, ID_GIFTS));
-        rows.add(new Row(VIEW_TYPE_INFO,
-                "Локальные Stars, TON и рубли, коллекция, маркет и история — будут добавлены в этапе 2.",
-                false, 0));
+        // Order and labels mirror the iOS hub screenshot exactly.
+        rows.add(Row.section(R.drawable.settings_gift,  COLOR_GIFTS,       "Подарки",            "Управление подарками и визуалами",      ID_GIFTS));
+        rows.add(Row.section(R.drawable.msg2_discussion, COLOR_CHATS,       "Чаты",               "Визуальный редактор и история",         ID_CHATS));
+        rows.add(Row.section(R.drawable.msg2_secret,     COLOR_GHOST,       "Ghost",              "Скрытые функции и защита",              ID_GHOST));
+        rows.add(Row.section(R.drawable.msg_colors,      COLOR_APPEARANCE,  "Внешний вид",        "Бейджик наверху экрана",                ID_APPEARANCE));
+        rows.add(Row.section(R.drawable.msg_customize,   COLOR_ADVANCED,    "Дополнительно",      "Другие возможности PampGram",           ID_ADVANCED));
+        rows.add(Row.section(R.drawable.msg2_block2,     COLOR_ADMIN,       "Админ-панель",       "Управление подписками",                 ID_ADMIN));
+        rows.add(Row.section(R.drawable.outline_shield_check, COLOR_AUTOMOD, "Автомодерация",      "ИИ удаляет 18+ и жестокость",           ID_AUTOMOD));
+        rows.add(Row.section(R.drawable.msg_calls,       COLOR_CALL_RECORD, "Запись звонков",     "Свой голос и собеседник",               ID_CALL_RECORD));
+        rows.add(Row.section(R.drawable.msg2_battery,    COLOR_PERFORMANCE, "Плавность и заряд",  "Меньше лагов и расхода батареи",        ID_PERFORMANCE));
 
-        rows.add(new Row(VIEW_TYPE_HEADER, "Профиль", false, 0));
-        rows.add(new Row(VIEW_TYPE_TEXT, "Визуальный +888 и рейтинг (этап 3)", false, ID_VISUAL_PROFILE));
-        rows.add(new Row(VIEW_TYPE_INFO,
-                "Переключатель визуального номера и редактор рейтинга — этап 3.",
-                false, 0));
+        rows.add(Row.footer("PampGram Team\nСделано с 💜 для тебя"));
+    }
 
-        rows.add(new Row(VIEW_TYPE_HEADER, "Чаты и Ghost", false, 0));
-        rows.add(new Row(VIEW_TYPE_TEXT, "Ghost и настройки чатов (этап 4)", false, ID_GHOST));
-        rows.add(new Row(VIEW_TYPE_INFO,
-                "Прочтения, онлайн, набор, автоофлайн, удалённые сообщения — этап 4.",
-                false, 0));
+    private void handleSectionClick(Row row) {
+        // Every section is currently a placeholder. Each later stage replaces
+        // the matching branch here with a real presentFragment(...) call. The
+        // ids are kept so the switch stays readable when it fills in.
+        String name = row.title == null ? "Раздел" : row.title;
+        Drawable icon = getContext().getResources().getDrawable(R.drawable.msg_info).mutate();
+        BulletinFactory.of(this)
+                .createSimpleBulletin(icon, name + " — в разработке")
+                .show();
+    }
 
-        rows.add(new Row(VIEW_TYPE_HEADER, "Внешний вид", false, 0));
-        rows.add(new Row(VIEW_TYPE_TEXT, "Пресеты и иконки (этап 5)", false, ID_APPEARANCE));
-        rows.add(new Row(VIEW_TYPE_INFO,
-                "Пресеты Standard/Glass/Compact и смена иконки — этап 5.",
-                false, 0));
-
-        rows.add(new Row(VIEW_TYPE_HEADER, "Casino bridge", false, 0));
-        rows.add(new Row(VIEW_TYPE_TEXT, "Casino bridge (этап 6)", false, ID_CASINO_BRIDGE));
-        rows.add(new Row(VIEW_TYPE_INFO,
-                "Отрисовка подарков из личного casino-бота — этап 6.",
-                false, 0));
+    /**
+     * iOS-styled rounded square with a colored background and a white-tinted
+     * glyph. Visually matches generatePampGramSectionIcon() from the Swift
+     * code. 36dp outer, 24dp glyph centered inside.
+     */
+    private static Drawable createSectionIcon(Context ctx, int bgColor, int iconRes) {
+        GradientDrawable bg = new GradientDrawable();
+        bg.setShape(GradientDrawable.RECTANGLE);
+        bg.setCornerRadius(dp(10));
+        bg.setColor(bgColor);
+        Drawable icon = ctx.getResources().getDrawable(iconRes).mutate();
+        icon.setColorFilter(Color.WHITE, PorterDuff.Mode.SRC_IN);
+        LayerDrawable layered = new LayerDrawable(new Drawable[]{bg, icon});
+        int inset = dp(6);
+        layered.setLayerInset(1, inset, inset, inset, inset);
+        return layered;
     }
 
     private class ListAdapter extends RecyclerListView.SelectionAdapter {
@@ -139,12 +194,14 @@ public final class PampGramSettingsActivity extends BaseFragment {
         public RecyclerView.ViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
             Context ctx = parent.getContext();
             View v;
-            if (viewType == VIEW_TYPE_HEADER) {
+            if (viewType == VIEW_TYPE_HEADER_INFO) {
                 v = new HeaderCell(ctx);
-            } else if (viewType == VIEW_TYPE_INFO) {
+            } else if (viewType == VIEW_TYPE_FOOTER) {
                 v = new TextInfoPrivacyCell(ctx);
             } else {
-                v = new TextCell(ctx);
+                TextCell cell = new TextCell(ctx);
+                cell.heightDp = 60; // taller to fit title + subtitle like the iOS layout
+                v = cell;
             }
             return new RecyclerListView.Holder(v);
         }
@@ -152,16 +209,17 @@ public final class PampGramSettingsActivity extends BaseFragment {
         @Override
         public void onBindViewHolder(@NonNull RecyclerView.ViewHolder holder, int position) {
             Row row = rows.get(position);
-            boolean divider = position + 1 < rows.size()
-                    && rows.get(position + 1).viewType == row.viewType;
-            if (row.viewType == VIEW_TYPE_HEADER) {
-                ((HeaderCell) holder.itemView).setText(row.text);
-            } else if (row.viewType == VIEW_TYPE_INFO) {
-                ((TextInfoPrivacyCell) holder.itemView).setText(row.text);
+            if (row.viewType == VIEW_TYPE_HEADER_INFO) {
+                ((HeaderCell) holder.itemView).setText(row.subtitle);
+            } else if (row.viewType == VIEW_TYPE_FOOTER) {
+                ((TextInfoPrivacyCell) holder.itemView).setText(row.subtitle);
             } else {
                 TextCell cell = (TextCell) holder.itemView;
-                cell.setText(row.text, divider);
-                cell.setEnabled(row.enabled, false);
+                Drawable icon = createSectionIcon(cell.getContext(), row.iconBg, row.iconRes);
+                boolean divider = position + 1 < rows.size()
+                        && rows.get(position + 1).viewType == VIEW_TYPE_SECTION;
+                cell.setTextAndIcon(row.title, icon, divider);
+                cell.setSubtitle(row.subtitle);
             }
         }
 
@@ -177,11 +235,7 @@ public final class PampGramSettingsActivity extends BaseFragment {
 
         @Override
         public boolean isEnabled(RecyclerView.ViewHolder holder) {
-            int type = holder.getItemViewType();
-            if (type == VIEW_TYPE_HEADER || type == VIEW_TYPE_INFO) return false;
-            int pos = holder.getAdapterPosition();
-            if (pos < 0 || pos >= rows.size()) return false;
-            return rows.get(pos).enabled;
+            return holder.getItemViewType() == VIEW_TYPE_SECTION;
         }
     }
 }
