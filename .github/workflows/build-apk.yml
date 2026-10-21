@@ -32,6 +32,14 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # The action's default `packages: 'tools platform-tools'` fails on
+          # a current runner because the legacy `tools` package was removed
+          # from Google's SDK repository (replaced by cmdline-tools, which
+          # setup-android already installs on its own). Dropping `tools` from
+          # the list is enough; Gradle auto-installs any build-tools and
+          # platform versions it needs when it first runs.
+          packages: 'platform-tools'
 
       # DrKLO/Telegram pins its NDK version inside TMessagesProj/build.gradle
       # (ndkVersion "..."). setup-android installs the SDK; we install the NDK
