@@ -30,22 +30,11 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          # The action's default `packages: 'tools platform-tools'` fails on
-          # a current runner because the legacy `tools` package was removed
-          # from Google's SDK repository (replaced by cmdline-tools, which
-          # setup-android already installs on its own). Dropping `tools` from
-          # the list is enough; Gradle auto-installs any build-tools and
-          # platform versions it needs when it first runs.
-          packages: 'platform-tools'
-
-      # DrKLO/Telegram pins its NDK version inside TMessagesProj/build.gradle
-      # (ndkVersion "..."). setup-android installs the SDK; we install the NDK
-      # with sdkmanager so a mismatch between the hosted-runner default and the
-      # pinned version fails loudly instead of silently falling back.
-      - name: Install Android NDK pinned by Telegram-Android
+      # Telegram-Android pins its NDK version inside TMessagesProj/build.gradle
+      # (ndkVersion "..."). Read it NOW so setup-android below can install the
+      # matching NDK itself — it handles the license prompt and doesn't trip on
+      # the SIGPIPE that `yes | sdkmanager` produces under `set -o pipefail`.
+      - name: Read Telegram-Android ndkVersion
         run: |
           set -euo pipefail
           NDK_VERSION=$(grep -E 'ndkVersion\s*' telegram-android/TMessagesProj/build.gradle \
@@ -55,7 +44,23 @@ jobs:
             exit 1
           fi
           echo "Telegram-Android pins NDK $NDK_VERSION"
-          yes | sdkmanager --install "ndk;$NDK_VERSION" >/dev/null
+          echo "NDK_VERSION=$NDK_VERSION" >> "$GITHUB_ENV"
+
+      - name: Set up Android SDK (and the pinned NDK)
+        uses: android-actions/setup-android@v3
+        with:
+          # The action's default `packages: 'tools platform-tools'` fails on
+          # a current runner because the legacy `tools` package was removed
+          # from Google's SDK repository (replaced by cmdline-tools, which
+          # setup-android already installs on its own). Dropping `tools` from
+          # the list is enough; Gradle auto-installs any build-tools and
+          # platform versions it needs when it first runs. The NDK pinned by
+          # Telegram-Android (read in the previous step) goes in here too so
+          # setup-android handles the install and licenses in one place.
+          packages: 'platform-tools ndk;${{ env.NDK_VERSION }}'
+
+      - name: Point ANDROID_NDK_HOME at the pinned NDK
+        run: |
           echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
 
       # mod/components/* become whole new Java packages, dropped in as-is under
