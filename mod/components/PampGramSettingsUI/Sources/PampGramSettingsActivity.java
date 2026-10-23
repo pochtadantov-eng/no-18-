@@ -159,11 +159,37 @@ public final class PampGramSettingsActivity extends BaseFragment {
     }
 
     private void handleSectionClick(Row row) {
-        // Each stage fills in one branch here; the rest show a "coming soon"
-        // bulletin until their own stage lands.
+        // Every hub tile now opens its own section screen. Behavior hooks that
+        // make the toggles actually change Telegram's behavior (ghost reads,
+        // anti-delete, call recording, etc.) are separate anchor patches that
+        // land stage by stage; the UI and persistence are already here.
         switch (row.sectionId) {
             case ID_GIFTS:
                 presentFragment(new PampGramGiftsScreen());
+                return;
+            case ID_CHATS:
+                presentFragment(new PampGramMessagesScreen());
+                return;
+            case ID_GHOST:
+                presentFragment(new PampGramGhostScreen());
+                return;
+            case ID_APPEARANCE:
+                presentFragment(new PampGramAppearanceScreen());
+                return;
+            case ID_ADVANCED:
+                presentFragment(new PampGramAdditionalScreen());
+                return;
+            case ID_ADMIN:
+                presentFragment(new PampGramAdminScreen());
+                return;
+            case ID_AUTOMOD:
+                presentFragment(new PampGramAutoModerationScreen());
+                return;
+            case ID_CALL_RECORD:
+                presentFragment(new PampGramCallRecordScreen());
+                return;
+            case ID_PERFORMANCE:
+                presentFragment(new PampGramPerformanceScreen());
                 return;
             default:
                 break;

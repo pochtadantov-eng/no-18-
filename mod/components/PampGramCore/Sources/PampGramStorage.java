@@ -25,7 +25,7 @@ import java.util.List;
 public final class PampGramStorage {
 
     public static final String DB_NAME = "pampgram.db";
-    public static final int DB_VERSION = 2;
+    public static final int DB_VERSION = 3;
 
     public static final String CURRENCY_STARS = "stars";
     public static final String CURRENCY_TON = "ton";
@@ -365,6 +365,59 @@ public final class PampGramStorage {
         return out;
     }
 
+    // ----- Key-value preferences (Stage 3b: section screens) ---------------
+    //
+    // Rather than adding a column per toggle to `preferences`, every section's
+    // free-form settings go into `kv_prefs(key, value)`. Each key is a string
+    // constant declared in the screen class that owns it (see KEY_* in the
+    // section fragments). Values are serialized as strings: booleans as "1"/"0",
+    // ints as Long.toString(), floats same way, enums as their chosen string.
+
+    public boolean getKvBool(@NonNull String key, boolean fallback) {
+        String s = getKvString(key, null);
+        if (s == null) return fallback;
+        return "1".equals(s) || "true".equalsIgnoreCase(s);
+    }
+
+    public long getKvLong(@NonNull String key, long fallback) {
+        String s = getKvString(key, null);
+        if (s == null) return fallback;
+        try {
+            return Long.parseLong(s);
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
+    }
+
+    public @Nullable String getKvString(@NonNull String key, @Nullable String fallback) {
+        SQLiteDatabase db = helper.getReadableDatabase();
+        try (Cursor c = db.query("kv_prefs", new String[]{"value"},
+                "key = ?", new String[]{key}, null, null, null)) {
+            if (c.moveToFirst()) return c.isNull(0) ? fallback : c.getString(0);
+        }
+        return fallback;
+    }
+
+    public void setKvBool(@NonNull String key, boolean value) {
+        setKvString(key, value ? "1" : "0");
+    }
+
+    public void setKvLong(@NonNull String key, long value) {
+        setKvString(key, Long.toString(value));
+    }
+
+    public void setKvString(@NonNull String key, @Nullable String value) {
+        SQLiteDatabase db = helper.getWritableDatabase();
+        if (value == null) {
+            db.delete("kv_prefs", "key = ?", new String[]{key});
+            return;
+        }
+        ContentValues cv = new ContentValues();
+        cv.put("key", key);
+        cv.put("value", value);
+        db.insertWithOnConflict("kv_prefs", null, cv, SQLiteDatabase.CONFLICT_REPLACE);
+    }
+
     // ----- Visual profile state (plus888, rating) --------------------------
 
     public static final class VisualProfileState {
@@ -416,6 +469,7 @@ public final class PampGramStorage {
         public void onCreate(SQLiteDatabase db) {
             createV1Tables(db);
             createV2Tables(db);
+            createV3Tables(db);
         }
 
         @Override
@@ -425,6 +479,9 @@ public final class PampGramStorage {
             // appends its migration block below.
             if (oldVersion < 2) {
                 createV2Tables(db);
+            }
+            if (oldVersion < 3) {
+                createV3Tables(db);
             }
         }
 
@@ -481,6 +538,12 @@ public final class PampGramStorage {
                     "ON phantom_gift(peer_id, saved_to_profile, sold_date_sec)");
             db.execSQL("CREATE INDEX IF NOT EXISTS idx_phantom_gift_date " +
                     "ON phantom_gift(date_sec DESC)");
+        }
+
+        private static void createV3Tables(SQLiteDatabase db) {
+            db.execSQL("CREATE TABLE IF NOT EXISTS kv_prefs (" +
+                    "key TEXT PRIMARY KEY, " +
+                    "value TEXT)");
         }
     }
 }
