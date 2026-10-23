@@ -14,19 +14,18 @@ import org.telegram.messenger.ApplicationLoader;
 import java.util.ArrayList;
 import java.util.List;
 
-// Local PampGram data store. Everything here is on-device only; nothing in this
-// file ever talks to Telegram's own servers or storage. Mirrors the shape of the
-// iOS PampGramCore (visual balances, history, visual profile toggles) so later
-// stages can port the Swift logic one-to-one.
+// Local PampGram data store. Everything here is on-device only; nothing in
+// this file ever talks to Telegram's own servers or storage. Mirrors the shape
+// of the iOS PampGramCore so later stages port Swift logic one-to-one.
 //
-// Backed by a plain SQLiteOpenHelper rather than Room: Telegram-Android already
-// uses the stdlib SQLite the same way (see MessagesStorage), so there is no
-// gradle change to pull in. Public API is intentionally small — ValueHolder
-// classes are nested, DB access goes through singleton methods.
+// Backed by a plain SQLiteOpenHelper rather than Room: Telegram-Android
+// already uses stdlib SQLite the same way (see MessagesStorage), so there is
+// no gradle change to pull in. Public API is intentionally small; model
+// classes are nested and DB access goes through singleton methods.
 public final class PampGramStorage {
 
     public static final String DB_NAME = "pampgram.db";
-    public static final int DB_VERSION = 1;
+    public static final int DB_VERSION = 2;
 
     public static final String CURRENCY_STARS = "stars";
     public static final String CURRENCY_TON = "ton";
@@ -38,6 +37,13 @@ public final class PampGramStorage {
     public static final String HISTORY_TRANSFER_OUT = "transfer_out";
     public static final String HISTORY_TOP_UP = "top_up";
     public static final String HISTORY_ADJUSTMENT = "adjustment";
+
+    // Mirrors the iOS defaults (PampGramSettings.defaultFakeStarsBalance etc.):
+    // a user who just installed the mod opens Gifts and already sees a non-zero
+    // visual Stars balance so the UI isn't empty.
+    public static final long DEFAULT_FAKE_STARS_BALANCE = 50_000L;
+    public static final long DEFAULT_FAKE_TON_BALANCE_NANOS = 0L;
+    public static final long DEFAULT_LOCAL_RUBLES_KOPECKS = 0L;
 
     private static volatile PampGramStorage instance;
 
@@ -60,7 +66,7 @@ public final class PampGramStorage {
         this.helper = new Helper(context.getApplicationContext());
     }
 
-    // ----- Visual balances -------------------------------------------------
+    // ----- Visual balances (deprecated flat table, Stage 1) ----------------
 
     public long getVisualBalance(@NonNull String currency) {
         SQLiteDatabase db = helper.getReadableDatabase();
@@ -77,6 +83,69 @@ public final class PampGramStorage {
         cv.put("currency", currency);
         cv.put("amount", amount);
         db.insertWithOnConflict("visual_balance", null, cv, SQLiteDatabase.CONFLICT_REPLACE);
+    }
+
+    // ----- Preferences (singleton row, id = 0) -----------------------------
+
+    public static final class PampGramPreferences {
+        public long fakeStarsBalance;         // whole stars
+        public long fakeTonBalanceNanos;      // 1 TON = 1e9 nanos (matches iOS: fakeTonBalanceNanos)
+        public long localRublesKopecks;       // 1 RUB = 100 kopecks
+        public boolean fakeStarsDisplayEnabled;
+        public boolean fakeTonDisplayEnabled;
+        public boolean localRublesPurchaseEnabled;
+
+        PampGramPreferences() {
+            this.fakeStarsBalance = DEFAULT_FAKE_STARS_BALANCE;
+            this.fakeTonBalanceNanos = DEFAULT_FAKE_TON_BALANCE_NANOS;
+            this.localRublesKopecks = DEFAULT_LOCAL_RUBLES_KOPECKS;
+            this.fakeStarsDisplayEnabled = false;
+            this.fakeTonDisplayEnabled = false;
+            this.localRublesPurchaseEnabled = true;
+        }
+    }
+
+    public PampGramPreferences getPreferences() {
+        SQLiteDatabase db = helper.getReadableDatabase();
+        try (Cursor c = db.query("preferences",
+                new String[]{"fake_stars", "fake_ton_nanos", "local_rub_kopecks",
+                             "fake_stars_show", "fake_ton_show", "local_rub_purchase_on"},
+                "id = 0", null, null, null, null)) {
+            PampGramPreferences p = new PampGramPreferences();
+            if (c.moveToFirst()) {
+                p.fakeStarsBalance = c.getLong(0);
+                p.fakeTonBalanceNanos = c.getLong(1);
+                p.localRublesKopecks = c.getLong(2);
+                p.fakeStarsDisplayEnabled = c.getInt(3) != 0;
+                p.fakeTonDisplayEnabled = c.getInt(4) != 0;
+                p.localRublesPurchaseEnabled = c.getInt(5) != 0;
+            }
+            return p;
+        }
+    }
+
+    public void setPreferences(@NonNull PampGramPreferences p) {
+        SQLiteDatabase db = helper.getWritableDatabase();
+        ContentValues cv = new ContentValues();
+        cv.put("id", 0);
+        cv.put("fake_stars", Math.max(0, p.fakeStarsBalance));
+        cv.put("fake_ton_nanos", Math.max(0, p.fakeTonBalanceNanos));
+        cv.put("local_rub_kopecks", Math.max(0, p.localRublesKopecks));
+        cv.put("fake_stars_show", p.fakeStarsDisplayEnabled ? 1 : 0);
+        cv.put("fake_ton_show", p.fakeTonDisplayEnabled ? 1 : 0);
+        cv.put("local_rub_purchase_on", p.localRublesPurchaseEnabled ? 1 : 0);
+        db.insertWithOnConflict("preferences", null, cv, SQLiteDatabase.CONFLICT_REPLACE);
+    }
+
+    /** Convenience: edit the preferences via a lambda, atomically. */
+    public interface PreferencesMutation {
+        void apply(PampGramPreferences p);
+    }
+
+    public void updatePreferences(@NonNull PreferencesMutation m) {
+        PampGramPreferences p = getPreferences();
+        m.apply(p);
+        setPreferences(p);
     }
 
     // ----- History ---------------------------------------------------------
@@ -139,6 +208,163 @@ public final class PampGramStorage {
         return out;
     }
 
+    // ----- Phantom gifts (Stage 3 Gifts foundation) ------------------------
+
+    public static final class PhantomGift {
+        public final long id;
+        public final long peerId;
+        public final String title;
+        public final @Nullable String stickerFileRef;  // whatever cell renderer needs to show it
+        public final String giftKind;                  // "generic" | "unique"
+        public final @Nullable Integer uniqueNumber;   // #42 for unique gifts
+        public final String priceCurrency;             // CURRENCY_STARS / TON / RUB
+        public final long priceAmount;                 // native unit for the currency
+        public final long dateSec;                     // seconds since epoch
+        public final boolean isReceived;               // true for "Подарок мне" / "от него" (no debit)
+        public final boolean pinnedToTop;
+        public final boolean savedToProfile;
+        public final @Nullable Long soldDateSec;
+        public final boolean worn;
+        public final @Nullable String marketPriceCurrency;
+        public final @Nullable Long marketPriceAmount;
+        public final @Nullable Long marketListedAtSec;
+
+        public PhantomGift(long id, long peerId, String title, @Nullable String stickerFileRef,
+                           String giftKind, @Nullable Integer uniqueNumber,
+                           String priceCurrency, long priceAmount, long dateSec,
+                           boolean isReceived, boolean pinnedToTop, boolean savedToProfile,
+                           @Nullable Long soldDateSec, boolean worn,
+                           @Nullable String marketPriceCurrency, @Nullable Long marketPriceAmount,
+                           @Nullable Long marketListedAtSec) {
+            this.id = id;
+            this.peerId = peerId;
+            this.title = title;
+            this.stickerFileRef = stickerFileRef;
+            this.giftKind = giftKind;
+            this.uniqueNumber = uniqueNumber;
+            this.priceCurrency = priceCurrency;
+            this.priceAmount = priceAmount;
+            this.dateSec = dateSec;
+            this.isReceived = isReceived;
+            this.pinnedToTop = pinnedToTop;
+            this.savedToProfile = savedToProfile;
+            this.soldDateSec = soldDateSec;
+            this.worn = worn;
+            this.marketPriceCurrency = marketPriceCurrency;
+            this.marketPriceAmount = marketPriceAmount;
+            this.marketListedAtSec = marketListedAtSec;
+        }
+    }
+
+    public long addPhantomGift(long peerId, @NonNull String title, @Nullable String stickerFileRef,
+                               @NonNull String giftKind, @Nullable Integer uniqueNumber,
+                               @NonNull String priceCurrency, long priceAmount,
+                               boolean isReceived) {
+        SQLiteDatabase db = helper.getWritableDatabase();
+        ContentValues cv = new ContentValues();
+        cv.put("peer_id", peerId);
+        cv.put("title", title);
+        cv.put("sticker_file_ref", stickerFileRef);
+        cv.put("gift_kind", giftKind);
+        if (uniqueNumber != null) cv.put("unique_number", uniqueNumber);
+        cv.put("price_currency", priceCurrency);
+        cv.put("price_amount", priceAmount);
+        cv.put("date_sec", System.currentTimeMillis() / 1000L);
+        cv.put("is_received", isReceived ? 1 : 0);
+        cv.put("pinned_to_top", 0);
+        cv.put("saved_to_profile", 1);
+        cv.put("worn", 0);
+        return db.insert("phantom_gift", null, cv);
+    }
+
+    public List<PhantomGift> listPhantomGifts() {
+        return queryPhantomGifts(null, null, "date_sec DESC", 0);
+    }
+
+    public List<PhantomGift> listPhantomGiftsForPeer(long peerId, boolean savedOnly) {
+        String where = savedOnly ? "peer_id = ? AND saved_to_profile = 1 AND sold_date_sec IS NULL"
+                                  : "peer_id = ?";
+        return queryPhantomGifts(where, new String[]{String.valueOf(peerId)},
+                "pinned_to_top DESC, date_sec DESC", 0);
+    }
+
+    public List<PhantomGift> listMarketPhantomGifts() {
+        return queryPhantomGifts("market_price_amount IS NOT NULL AND sold_date_sec IS NULL",
+                null, "market_listed_at_sec DESC", 0);
+    }
+
+    public void updatePhantomGiftFlags(long id, boolean pinnedToTop, boolean savedToProfile,
+                                       boolean worn) {
+        SQLiteDatabase db = helper.getWritableDatabase();
+        ContentValues cv = new ContentValues();
+        cv.put("pinned_to_top", pinnedToTop ? 1 : 0);
+        cv.put("saved_to_profile", savedToProfile ? 1 : 0);
+        cv.put("worn", worn ? 1 : 0);
+        db.update("phantom_gift", cv, "id = ?", new String[]{String.valueOf(id)});
+    }
+
+    public void markPhantomGiftSold(long id) {
+        SQLiteDatabase db = helper.getWritableDatabase();
+        ContentValues cv = new ContentValues();
+        cv.put("sold_date_sec", System.currentTimeMillis() / 1000L);
+        cv.put("saved_to_profile", 0);
+        cv.put("pinned_to_top", 0);
+        cv.put("worn", 0);
+        cv.putNull("market_price_amount");
+        cv.putNull("market_price_currency");
+        cv.putNull("market_listed_at_sec");
+        db.update("phantom_gift", cv, "id = ?", new String[]{String.valueOf(id)});
+    }
+
+    public void removePhantomGift(long id) {
+        SQLiteDatabase db = helper.getWritableDatabase();
+        db.delete("phantom_gift", "id = ?", new String[]{String.valueOf(id)});
+    }
+
+    public int countPhantomGiftsForSelf(long selfPeerId) {
+        SQLiteDatabase db = helper.getReadableDatabase();
+        try (Cursor c = db.rawQuery(
+                "SELECT COUNT(*) FROM phantom_gift WHERE peer_id = ? AND saved_to_profile = 1 AND sold_date_sec IS NULL",
+                new String[]{String.valueOf(selfPeerId)})) {
+            return c.moveToFirst() ? c.getInt(0) : 0;
+        }
+    }
+
+    private List<PhantomGift> queryPhantomGifts(@Nullable String where, @Nullable String[] whereArgs,
+                                                @NonNull String orderBy, int limit) {
+        SQLiteDatabase db = helper.getReadableDatabase();
+        List<PhantomGift> out = new ArrayList<>();
+        try (Cursor c = db.query("phantom_gift",
+                new String[]{"id", "peer_id", "title", "sticker_file_ref", "gift_kind",
+                             "unique_number", "price_currency", "price_amount", "date_sec",
+                             "is_received", "pinned_to_top", "saved_to_profile", "sold_date_sec",
+                             "worn", "market_price_currency", "market_price_amount",
+                             "market_listed_at_sec"},
+                where, whereArgs, null, null, orderBy, limit > 0 ? String.valueOf(limit) : null)) {
+            while (c.moveToNext()) {
+                out.add(new PhantomGift(
+                        c.getLong(0),
+                        c.getLong(1),
+                        c.getString(2),
+                        c.isNull(3) ? null : c.getString(3),
+                        c.getString(4),
+                        c.isNull(5) ? null : c.getInt(5),
+                        c.getString(6),
+                        c.getLong(7),
+                        c.getLong(8),
+                        c.getInt(9) != 0,
+                        c.getInt(10) != 0,
+                        c.getInt(11) != 0,
+                        c.isNull(12) ? null : c.getLong(12),
+                        c.getInt(13) != 0,
+                        c.isNull(14) ? null : c.getString(14),
+                        c.isNull(15) ? null : c.getLong(15),
+                        c.isNull(16) ? null : c.getLong(16)));
+            }
+        }
+        return out;
+    }
+
     // ----- Visual profile state (plus888, rating) --------------------------
 
     public static final class VisualProfileState {
@@ -188,6 +414,21 @@ public final class PampGramStorage {
 
         @Override
         public void onCreate(SQLiteDatabase db) {
+            createV1Tables(db);
+            createV2Tables(db);
+        }
+
+        @Override
+        public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
+            // The mod never DROPs user data on upgrade — add tables and
+            // ALTER-add columns only. Each stage bumps DB_VERSION by 1 and
+            // appends its migration block below.
+            if (oldVersion < 2) {
+                createV2Tables(db);
+            }
+        }
+
+        private static void createV1Tables(SQLiteDatabase db) {
             db.execSQL("CREATE TABLE visual_balance (" +
                     "currency TEXT PRIMARY KEY, " +
                     "amount INTEGER NOT NULL DEFAULT 0)");
@@ -208,10 +449,38 @@ public final class PampGramStorage {
                     "rating_points INTEGER NOT NULL DEFAULT 0)");
         }
 
-        @Override
-        public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
-            // Stage 1 is version 1; later stages append migrations here. The
-            // mod never DROPs user data on upgrade — rename-and-copy only.
+        private static void createV2Tables(SQLiteDatabase db) {
+            db.execSQL("CREATE TABLE IF NOT EXISTS preferences (" +
+                    "id INTEGER PRIMARY KEY, " +
+                    "fake_stars INTEGER NOT NULL DEFAULT " + DEFAULT_FAKE_STARS_BALANCE + ", " +
+                    "fake_ton_nanos INTEGER NOT NULL DEFAULT 0, " +
+                    "local_rub_kopecks INTEGER NOT NULL DEFAULT 0, " +
+                    "fake_stars_show INTEGER NOT NULL DEFAULT 0, " +
+                    "fake_ton_show INTEGER NOT NULL DEFAULT 0, " +
+                    "local_rub_purchase_on INTEGER NOT NULL DEFAULT 1)");
+
+            db.execSQL("CREATE TABLE IF NOT EXISTS phantom_gift (" +
+                    "id INTEGER PRIMARY KEY AUTOINCREMENT, " +
+                    "peer_id INTEGER NOT NULL, " +
+                    "title TEXT NOT NULL, " +
+                    "sticker_file_ref TEXT, " +
+                    "gift_kind TEXT NOT NULL, " +      // 'generic' | 'unique'
+                    "unique_number INTEGER, " +         // #N for unique gifts
+                    "price_currency TEXT NOT NULL, " +
+                    "price_amount INTEGER NOT NULL, " +
+                    "date_sec INTEGER NOT NULL, " +
+                    "is_received INTEGER NOT NULL DEFAULT 0, " +
+                    "pinned_to_top INTEGER NOT NULL DEFAULT 0, " +
+                    "saved_to_profile INTEGER NOT NULL DEFAULT 1, " +
+                    "sold_date_sec INTEGER, " +
+                    "worn INTEGER NOT NULL DEFAULT 0, " +
+                    "market_price_currency TEXT, " +
+                    "market_price_amount INTEGER, " +
+                    "market_listed_at_sec INTEGER)");
+            db.execSQL("CREATE INDEX IF NOT EXISTS idx_phantom_gift_peer " +
+                    "ON phantom_gift(peer_id, saved_to_profile, sold_date_sec)");
+            db.execSQL("CREATE INDEX IF NOT EXISTS idx_phantom_gift_date " +
+                    "ON phantom_gift(date_sec DESC)");
         }
     }
 }

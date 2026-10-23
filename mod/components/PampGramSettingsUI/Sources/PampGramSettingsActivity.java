@@ -159,9 +159,15 @@ public final class PampGramSettingsActivity extends BaseFragment {
     }
 
     private void handleSectionClick(Row row) {
-        // Every section is currently a placeholder. Each later stage replaces
-        // the matching branch here with a real presentFragment(...) call. The
-        // ids are kept so the switch stays readable when it fills in.
+        // Each stage fills in one branch here; the rest show a "coming soon"
+        // bulletin until their own stage lands.
+        switch (row.sectionId) {
+            case ID_GIFTS:
+                presentFragment(new PampGramGiftsScreen());
+                return;
+            default:
+                break;
+        }
         String name = row.title == null ? "Раздел" : row.title;
         Drawable icon = getContext().getResources().getDrawable(R.drawable.msg_info).mutate();
         BulletinFactory.of(this)
