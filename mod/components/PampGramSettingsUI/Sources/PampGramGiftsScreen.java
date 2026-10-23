@@ -141,6 +141,17 @@ public final class PampGramGiftsScreen extends BaseFragment {
         return super.onFragmentCreate();
     }
 
+    @Override
+    public void onResume() {
+        super.onResume();
+        // The compose screen pushes on top of this one and pops back when it's
+        // done — we re-read balances and the collection count here so the UI
+        // reflects whatever the user just created.
+        if (fragmentView != null) {
+            reload();
+        }
+    }
+
     private void reload() {
         PampGramStorage storage = PampGramStorage.getInstance();
         prefs = storage.getPreferences();
@@ -223,7 +234,11 @@ public final class PampGramGiftsScreen extends BaseFragment {
                 presentFragment(new PampGramLedgerScreen());
                 break;
             case ROW_RECEIVE_SELF:
+                presentFragment(new PampGramGiftComposeScreen(PampGramGiftComposeScreen.MODE_SELF));
+                break;
             case ROW_RECEIVE_PEER:
+                presentFragment(new PampGramGiftComposeScreen(PampGramGiftComposeScreen.MODE_PEER));
+                break;
             case ROW_MARKET:
                 showComingSoon(row.title);
                 break;
