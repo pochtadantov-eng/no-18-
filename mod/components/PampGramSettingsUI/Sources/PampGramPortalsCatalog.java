@@ -1,173 +1,221 @@
 package org.telegram.pampgram.settings;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-// Static catalog of fake Portals-style unique gifts shown in the visual
-// market. Every PampGram build sees exactly the same 30 items in the same
-// order — Portals is a browse-and-buy mini app, nothing here is dynamic or
-// network-backed. Prices are in TON nano-units (1 TON = 1_000_000_000) to
-// match PampGramStorage.fakeTonBalanceNanos.
+// Static catalog of fake Portals Market items. Matches the real
+// portals-market mini-app's structure: 11 collections, each item carries
+// Model/Symbol/Backdrop attributes with rarity percentages, a GRAM price
+// and a signature background. All numbers are frozen so every PampGram
+// build sees the same market and the UI stays interesting without a
+// network layer.
+//
+// Prices are stored in "nanoGRAM" (1 GRAM = 1_000_000_000 units) so they
+// map one-to-one onto PampGramStorage.fakeTonBalanceNanos — the Portals
+// screen shows the balance labelled as GRAM but reuses the same backing
+// store as the TON balance everywhere else in PampGram.
 public final class PampGramPortalsCatalog {
 
     private PampGramPortalsCatalog() {}
 
     public static final class Item {
         public final String id;
-        public final String collection;   // "Plush Pepe"
-        public final int number;          // 4321
-        public final String model;        // "Space Pirate"
-        public final int modelRarityPct10;    // tenths of a percent (25 = 2.5%)
-        public final String backdrop;     // "Dark Pistachio"
-        public final int backdropRarityPct10;
-        public final String symbol;       // "Nebula"
-        public final int symbolRarityPct10;
-        public final long priceNanos;     // 125_000_000_000L = 125 TON
-        public final String emoji;        // centerpiece glyph
+        public final String collection;    // "Resistance Dog"
+        public final int number;           // 3353
+        public final String model;         // "Breaker"
+        public final int modelPct10;       // tenths of a percent (12 = 1.2%)
+        public final String symbol;        // "Crusader"
+        public final int symbolPct10;
+        public final String backdrop;      // "Moonstone"
+        public final int backdropPct10;
+        public final long priceNanoGram;   // 469_500_000_000L = 469.5 GRAM
+        public final String emoji;         // centerpiece glyph for the icon
         public final int gradientTop;
         public final int gradientBottom;
-        public final String owner;        // fake owner handle
+        public final boolean craftable;    // "Доступно для крафта" ribbon
+        public final boolean isNew;        // "NEW" badge in the collection picker
 
-        Item(String id, String collection, int number, String model, int modelRarityPct10,
-             String backdrop, int backdropRarityPct10, String symbol, int symbolRarityPct10,
-             long priceNanos, String emoji, int gradientTop, int gradientBottom, String owner) {
+        Item(String id, String collection, int number,
+             String model, int modelPct10, String symbol, int symbolPct10,
+             String backdrop, int backdropPct10, long priceNanoGram,
+             String emoji, int gradientTop, int gradientBottom,
+             boolean craftable, boolean isNew) {
             this.id = id;
             this.collection = collection;
             this.number = number;
             this.model = model;
-            this.modelRarityPct10 = modelRarityPct10;
-            this.backdrop = backdrop;
-            this.backdropRarityPct10 = backdropRarityPct10;
+            this.modelPct10 = modelPct10;
             this.symbol = symbol;
-            this.symbolRarityPct10 = symbolRarityPct10;
-            this.priceNanos = priceNanos;
+            this.symbolPct10 = symbolPct10;
+            this.backdrop = backdrop;
+            this.backdropPct10 = backdropPct10;
+            this.priceNanoGram = priceNanoGram;
             this.emoji = emoji;
             this.gradientTop = gradientTop;
             this.gradientBottom = gradientBottom;
-            this.owner = owner;
+            this.craftable = craftable;
+            this.isNew = isNew;
+        }
+
+        /** Stars rewarded on a full-price purchase. 100 ✦ per 1 GRAM, same as portals-market. */
+        public long rewardStars() {
+            return priceNanoGram / 10_000_000L;
         }
     }
 
-    // Collection → (emoji, gradientTop, gradientBottom). Colors picked to
-    // match the "signature" look of each collection on portals-market: Plush
-    // Pepe stays green, Durov's Cap stays blue, Precious Peach is peach-pink
-    // and so on. Backgrounds are intentionally dark — a Portals card is
-    // always on a dark surface regardless of the app theme.
-    private static final LinkedHashMap<String, int[]> COLLECTION_STYLE = new LinkedHashMap<>();
-    static {
-        COLLECTION_STYLE.put("Plush Pepe",      new int[]{0xFF1D4B2A, 0xFF0E1F13});
-        COLLECTION_STYLE.put("Durov's Cap",     new int[]{0xFF14314F, 0xFF0A1826});
-        COLLECTION_STYLE.put("Precious Peach",  new int[]{0xFF5A2535, 0xFF2A121A});
-        COLLECTION_STYLE.put("Jolly Chimp",     new int[]{0xFF4A2B10, 0xFF221307});
-        COLLECTION_STYLE.put("Low Rider",       new int[]{0xFF3F1F4F, 0xFF1C0E24});
-        COLLECTION_STYLE.put("Snoop Dogg",      new int[]{0xFF1F3F2A, 0xFF0D1C13});
-        COLLECTION_STYLE.put("Light Sword",     new int[]{0xFF2A2F55, 0xFF101430});
-        COLLECTION_STYLE.put("Toy Bear",        new int[]{0xFF4A2A1E, 0xFF21130C});
-        COLLECTION_STYLE.put("Astral Shard",    new int[]{0xFF1A2F55, 0xFF0A1326});
-        COLLECTION_STYLE.put("Loot Bag",        new int[]{0xFF4F3B15, 0xFF221A09});
+    public static final class Collection {
+        public final String name;
+        public final String emoji;
+        public final int tileGradientTop;
+        public final int tileGradientBottom;
+        public final int supplyLabel;    // e.g. 15800 → "15.8K" badge
+        public final long floorNanoGram; // for the picker right column
+        public final long volume24hNanoGram;
+        public final boolean isNew;
+
+        Collection(String name, String emoji, int tileTop, int tileBottom,
+                   int supplyLabel, long floorNanoGram, long volume24hNanoGram, boolean isNew) {
+            this.name = name;
+            this.emoji = emoji;
+            this.tileGradientTop = tileTop;
+            this.tileGradientBottom = tileBottom;
+            this.supplyLabel = supplyLabel;
+            this.floorNanoGram = floorNanoGram;
+            this.volume24hNanoGram = volume24hNanoGram;
+            this.isNew = isNew;
+        }
     }
 
-    private static final Map<String, String> COLLECTION_EMOJI;
+    // Collection order matches the floor-price sort in the real Portals
+    // picker (highest floor first). Gradients are signature per-collection:
+    // Resistance Dog stays teal with cross patterns in the real art, Lucky
+    // Locket is rose-gold, Heroic Helmet is steel, Swiss Watch is leather
+    // brown, Rare Bird is tropical, Sakura is pink mist, Jingle Bells is
+    // winter red, Snoop Cigar is purple velvet, Ice Cream is pastel pink,
+    // Stellar Rocket is space blue, Pool Float is poolside aqua.
+    private static final LinkedHashMap<String, Collection> COLLECTIONS = new LinkedHashMap<>();
     static {
-        LinkedHashMap<String, String> m = new LinkedHashMap<>();
-        m.put("Plush Pepe",     "🐸");  // 🐸
-        m.put("Durov's Cap",    "🎩");  // 🎩
-        m.put("Precious Peach", "🍑");  // 🍑
-        m.put("Jolly Chimp",    "🙊");  // 🙊
-        m.put("Low Rider",      "🏎");  // 🏎
-        m.put("Snoop Dogg",     "🐕");  // 🐕
-        m.put("Light Sword",    "⚔️"); // ⚔️
-        m.put("Toy Bear",       "🧸");  // 🧸
-        m.put("Astral Shard",   "💎");  // 💎
-        m.put("Loot Bag",       "💰");  // 💰
-        COLLECTION_EMOJI = Collections.unmodifiableMap(m);
+        put(new Collection("Resistance Dog", "🥷", // 🥷
+                0xFF1F5B6B, 0xFF0C2A33, 15_800, 469_500_000_000L, 176_500_000_000_000L, true));
+        put(new Collection("Heroic Helmet", "🪖", // 🪖
+                0xFF2C3E52, 0xFF101822, 8_000, 187_800_000_000L, 2_200_000_000_000L, false));
+        put(new Collection("Swiss Watch", "⌚", // ⌚
+                0xFF3A2E22, 0xFF17120D, 50_000, 59_500_000_000L, 5_900_000_000_000L, false));
+        put(new Collection("Snoop Cigar", "🚬", // 🚬
+                0xFF3E2550, 0xFF180F20, 23_000, 39_990_000_000L, 1_400_000_000_000L, false));
+        put(new Collection("Rare Bird", "🦜", // 🦜
+                0xFF225944, 0xFF0D2219, 15_000, 29_900_000_000L, 2_100_000_000_000L, false));
+        put(new Collection("Lucky Locket", "🏵", // 🏵️
+                0xFF4A2A3A, 0xFF1C0F17, 66_000, 17_500_000_000L, 6_300_000_000_000L, true));
+        put(new Collection("Stellar Rocket", "🚀", // 🚀
+                0xFF2E3C66, 0xFF0F1328, 39_000, 15_230_000_000L, 1_800_000_000_000L, false));
+        put(new Collection("Sakura Flower", "🌸", // 🌸
+                0xFF4F2A3B, 0xFF1D0E17, 100_000, 11_200_000_000L, 1_600_000_000_000L, false));
+        put(new Collection("Jingle Bells", "🔔", // 🔔
+                0xFF4D1E1E, 0xFF1B0A0A, 200_000, 11_000_000_000L, 959_020_000_000L, false));
+        put(new Collection("Pool Float", "🦆", // 🦆
+                0xFF3B4C1F, 0xFF161C0C, 201_000, 4_000_000_000L, 420_000_000_000L, false));
+        put(new Collection("Ice Cream", "🍦", // 🍦
+                0xFF4C2537, 0xFF1C0D15, 275_000, 3_990_000_000L, 320_000_000_000L, false));
     }
 
-    /** Collection names, in display order. First entry gets its own filter chip. */
-    public static List<String> collections() {
-        return new ArrayList<>(COLLECTION_STYLE.keySet());
+    private static void put(Collection c) {
+        COLLECTIONS.put(c.name, c);
     }
+
+    public static List<Collection> collections() {
+        return new ArrayList<>(COLLECTIONS.values());
+    }
+
+    public static Collection collection(String name) {
+        return COLLECTIONS.get(name);
+    }
+
+    // ----- Catalog items ---------------------------------------------------
 
     private static final List<Item> ITEMS;
     static {
         List<Item> items = new ArrayList<>();
 
-        // Plush Pepe — the headline collection, floor around 2500 TON
-        items.add(mk("plush-pepe-1143",   "Plush Pepe",     1143, "Jade Prince",   8,  "Dark Pistachio", 12, "Nebula",       3,  2850L, "amber"));
-        items.add(mk("plush-pepe-6621",   "Plush Pepe",     6621, "Space Pirate",  11, "Deep Purple",    15, "Galaxy",       7,  2610L, "mango_fin"));
-        items.add(mk("plush-pepe-220",    "Plush Pepe",     220,  "King",          2,  "Scarlet",         9, "Crown",        1,  5200L, "whales_only"));
+        // --- Resistance Dog (floor ~469.5 GRAM) ----------------------------
+        items.add(mk("rd-3353",  "Resistance Dog", 3353,  "Breaker", 12,  "Crusader", 5,   "Moonstone", 14,       469_500_000_000L, true,  true));
+        items.add(mk("rd-12521", "Resistance Dog", 12521, "Rebel",   18,  "Revolver", 9,   "Dark Pistachio", 11,  469_990_000_000L, true,  false));
+        items.add(mk("rd-9965",  "Resistance Dog", 9965,  "Nomad",   22,  "Hood",     13,  "Ash Grey", 20,        474_900_000_000L, true,  false));
+        items.add(mk("rd-18085", "Resistance Dog", 18085, "Spartan", 17,  "Shield",   8,   "Blood Red", 15,       474_900_000_000L, true,  false));
+        items.add(mk("rd-9886",  "Resistance Dog", 9886,  "Vagabond",24,  "Fist",     16,  "Deep Teal", 19,       474_900_000_000L, true,  false));
+        items.add(mk("rd-220",   "Resistance Dog", 220,   "King",    2,   "Crown",    1,   "Royal Blue", 3,       1980_000_000_000L, true,  false));
 
-        // Durov's Cap — floor around 900 TON
-        items.add(mk("durovs-cap-4420",   "Durov's Cap",    4420, "Alpine",        14, "Winter Sky",     18, "Snowflake",   22, 1180L, "pavel_fan"));
-        items.add(mk("durovs-cap-888",    "Durov's Cap",    888,  "Czar",          3,  "Midnight",        6, "Lion",         4,  3600L, "zero_bb"));
-        items.add(mk("durovs-cap-10211",  "Durov's Cap",    10211,"Pilot",         17, "Royal Blue",     21, "Thunder",     19,  960L, "tgstars"));
+        // --- Heroic Helmet (floor ~187.8) ----------------------------------
+        items.add(mk("hh-4420",  "Heroic Helmet", 4420, "Centurion", 14, "Laurel", 10, "Battlefield Dawn", 18, 187_800_000_000L, false, false));
+        items.add(mk("hh-77",    "Heroic Helmet", 77,   "Praetorian", 4, "Lion",   3,  "Thunder", 5,          640_000_000_000L, false, false));
+        items.add(mk("hh-10211", "Heroic Helmet", 10211,"Berserker", 19, "Sword", 15,  "Snow Peak", 22,        198_400_000_000L, false, false));
 
-        // Precious Peach — floor around 600 TON
-        items.add(mk("precious-peach-512","Precious Peach", 512,  "Sunset",        9,  "Sorbet",         14, "Hearts",       8,  740L, "sweet_tooth"));
-        items.add(mk("precious-peach-77", "Precious Peach", 77,   "Blossom",       4,  "Rose Gold",       5, "Twin Hearts",  2,  1890L, "lucky_7s"));
-        items.add(mk("precious-peach-3330","Precious Peach",3330, "Candy",         19, "Peach Fuzz",     24, "Sparkle",     15,  620L, "ddd_club"));
+        // --- Swiss Watch (floor ~59.5) -------------------------------------
+        items.add(mk("sw-512",   "Swiss Watch", 512,   "Chronograph", 8,  "Gear",    6,  "Steel", 11,     59_500_000_000L, false, false));
+        items.add(mk("sw-888",   "Swiss Watch", 888,   "Daytona",     3,  "Diamond", 2,  "Gold Strap", 4, 320_000_000_000L, false, false));
+        items.add(mk("sw-20244", "Swiss Watch", 20244, "Classic",    20,  "Sapphire",17, "Leather", 24,   62_300_000_000L, false, false));
 
-        // Jolly Chimp — floor around 420 TON
-        items.add(mk("jolly-chimp-99",    "Jolly Chimp",    99,   "Banana King",   6,  "Jungle",         10, "Peel",         3,  1420L, "monke_dao"));
-        items.add(mk("jolly-chimp-5513",  "Jolly Chimp",    5513, "Cheeky",        18, "Savanna",        22, "Palm",        16,  440L, "zoo_keeper"));
-        items.add(mk("jolly-chimp-2024",  "Jolly Chimp",    2024, "Shy",           13, "Dusk",           17, "Bananas",     11,  520L, "yr_of_monkey"));
+        // --- Snoop Cigar (floor ~39.99) ------------------------------------
+        items.add(mk("sc-23133", "Snoop Cigar", 23133, "OG",         15, "Smoke",  13, "Lounge", 20,       39_990_000_000L, false, false));
+        items.add(mk("sc-187",   "Snoop Cigar", 187,   "West Side",   6, "Flame",   4, "Sunset Strip", 8,  180_000_000_000L, false, false));
+        items.add(mk("sc-4040",  "Snoop Cigar", 4040,  "Studio",     18, "Mic",    14, "Stage", 21,        41_200_000_000L, false, false));
 
-        // Low Rider — floor around 300 TON
-        items.add(mk("low-rider-808",     "Low Rider",      808,  "Chrome Dreams", 12, "Neon Night",     16, "Flames",      14,  540L, "cholo_club"));
-        items.add(mk("low-rider-66",      "Low Rider",      66,   "Candy Flake",   4,  "Vice Pink",       7, "Dice",         5,  1240L, "route66"));
-        items.add(mk("low-rider-2200",    "Low Rider",      2200, "Rust Bucket",   21, "Garage",         25, "Spark",       23,  310L, "street_mech"));
+        // --- Rare Bird (floor ~29.9) ---------------------------------------
+        items.add(mk("rb-321",   "Rare Bird", 321,   "Scarlet Macaw", 9,  "Feather", 7, "Rainforest", 12, 29_900_000_000L, false, false));
+        items.add(mk("rb-8800",  "Rare Bird", 8800,  "Peacock",      17,  "Nest",   15, "Twilight", 21,   33_500_000_000L, false, false));
+        items.add(mk("rb-55",    "Rare Bird", 55,    "Paradise",      3,  "Berry",   2, "Dawn", 5,       128_700_000_000L, false, false));
 
-        // Snoop Dogg — floor around 250 TON
-        items.add(mk("snoop-dogg-187",    "Snoop Dogg",     187,  "West Side",     10, "Smoke",          14, "Fo' Shizzle", 12,  480L, "dpg_classic"));
-        items.add(mk("snoop-dogg-4040",   "Snoop Dogg",     4040, "Doggy Style",   16, "Studio",         20, "Mic",         18,  290L, "deathrow"));
-        items.add(mk("snoop-dogg-93",     "Snoop Dogg",     93,   "Gin & Juice",   3,  "Sunset Strip",    6, "Palm",         4,  1670L, "og_fan"));
+        // --- Lucky Locket (floor ~17.5) ------------------------------------
+        items.add(mk("ll-99",    "Lucky Locket", 99,   "Rose Gold",     5, "Clover",   4, "Rose Blush", 7,     17_500_000_000L, false, true));
+        items.add(mk("ll-5513",  "Lucky Locket", 5513, "Secret Garden",19, "Horseshoe",16,"Mint", 22,          18_900_000_000L, false, true));
+        items.add(mk("ll-2024",  "Lucky Locket", 2024, "Antique",      14, "Pearl",   11, "Lavender", 18,      19_400_000_000L, false, true));
 
-        // Light Sword — floor around 180 TON
-        items.add(mk("light-sword-7001",  "Light Sword",    7001, "Jedi Blue",     11, "Starfield",      15, "Rebel",       13,  260L, "may_the_4th"));
-        items.add(mk("light-sword-666",   "Light Sword",    666,  "Sith Red",      5,  "Deep Space",      8, "Empire",       6,  940L, "dark_side"));
-        items.add(mk("light-sword-12",    "Light Sword",    12,   "Mace",          2,  "Nebula Purple",   4, "Senator",      3,  2800L, "double_digits"));
+        // --- Stellar Rocket (floor ~15.23) ---------------------------------
+        items.add(mk("sr-39893", "Stellar Rocket", 39893, "Classic",      22, "Thruster", 19, "Launch Pad", 24, 15_230_000_000L, true,  false));
+        items.add(mk("sr-137",   "Stellar Rocket", 137,   "Interstellar",  6, "Antenna",   4, "Deep Space", 8,  48_900_000_000L, true,  false));
 
-        // Toy Bear — floor around 140 TON
-        items.add(mk("toy-bear-321",      "Toy Bear",       321,  "Honey",         9,  "Forest Mist",    13, "Honeypot",    11,  210L, "cuddle_club"));
-        items.add(mk("toy-bear-8800",     "Toy Bear",       8800, "Panda",         17, "Bamboo",         21, "Shoots",      19,  150L, "zoo_crew"));
-        items.add(mk("toy-bear-55",       "Toy Bear",       55,   "Grizzly",       4,  "Snow Peak",       7, "Claw",         5,  780L, "two_fives"));
+        // --- Sakura Flower (floor ~11.2) -----------------------------------
+        items.add(mk("sf-4096",  "Sakura Flower", 4096,  "Blossom",   15, "Petal",     12, "Pink Mist", 20,  11_200_000_000L, false, false));
+        items.add(mk("sf-808",   "Sakura Flower", 808,   "Full Bloom", 8, "Butterfly",  6, "Spring Sky", 10, 14_800_000_000L, false, false));
 
-        // Astral Shard — floor around 110 TON
-        items.add(mk("astral-shard-4096", "Astral Shard",   4096, "Prism",         15, "Void",           19, "Spark",       17,  170L, "power_of_2"));
-        items.add(mk("astral-shard-137",  "Astral Shard",   137,  "Diamond Core",  6,  "Deep Blue",       9, "Comet",        7,  430L, "fine_struct"));
+        // --- Jingle Bells (floor ~11) --------------------------------------
+        items.add(mk("jb-999",   "Jingle Bells", 999,   "Golden",   8,  "Snowflake", 6,  "Snowy Night", 10, 11_000_000_000L, false, false));
+        items.add(mk("jb-10",    "Jingle Bells", 10,    "Festive",  3,  "Ribbon",    2,  "Hearth", 4,       45_500_000_000L, false, false));
+        items.add(mk("jb-5423",  "Jingle Bells", 5423,  "Silver",  22,  "Holly",    19,  "Pine Forest", 25, 11_300_000_000L, false, false));
 
-        // Loot Bag — floor around 90 TON
-        items.add(mk("loot-bag-999",      "Loot Bag",       999,  "Golden Haul",   8,  "Treasure Room",  12, "Coin",        10,  220L, "dungeon_master"));
-        items.add(mk("loot-bag-10",       "Loot Bag",       10,   "Royal Haul",    3,  "Vault",           5, "Crown",        4,  1510L, "top_ten"));
-        items.add(mk("loot-bag-5423",     "Loot Bag",       5423, "Starter",       22, "Dirt Road",      26, "Pebble",      24,   95L, "noob_quest"));
+        // --- Pool Float (floor ~4) -----------------------------------------
+        items.add(mk("pf-201657","Pool Float", 201657, "Duck",     21,  "Bubble", 19,  "Poolside", 24, 4_000_000_000L,  false, false));
+        items.add(mk("pf-150845","Pool Float", 150845, "Flamingo", 17,  "Palm",   14,  "Beach Day", 20, 4_000_000_000L,  false, false));
+
+        // --- Ice Cream (floor ~3.99) ---------------------------------------
+        items.add(mk("ic-275978","Ice Cream", 275978, "Vanilla",  23,  "Sprinkle", 20, "Pastel Pink", 25, 3_990_000_000L, false, false));
+        items.add(mk("ic-30011", "Ice Cream", 30011,  "Mint Chip",15,  "Cherry",   12, "Summer Sky", 19,  5_200_000_000L, false, false));
 
         ITEMS = Collections.unmodifiableList(items);
     }
 
-    private static Item mk(String id, String collection, int number, String model, int modelPct10,
-                           String backdrop, int backdropPct10, String symbol, int symbolPct10,
-                           long priceTon, String owner) {
-        int[] style = COLLECTION_STYLE.get(collection);
-        String emoji = COLLECTION_EMOJI.get(collection);
-        return new Item(id, collection, number, model, modelPct10, backdrop, backdropPct10,
-                symbol, symbolPct10, priceTon * 1_000_000_000L, emoji, style[0], style[1], owner);
+    private static Item mk(String id, String collection, int number,
+                           String model, int modelPct10, String symbol, int symbolPct10,
+                           String backdrop, int backdropPct10, long priceNanoGram,
+                           boolean craftable, boolean isNew) {
+        Collection c = COLLECTIONS.get(collection);
+        return new Item(id, collection, number, model, modelPct10, symbol, symbolPct10,
+                backdrop, backdropPct10, priceNanoGram, c.emoji, c.tileGradientTop,
+                c.tileGradientBottom, craftable, isNew);
     }
 
-    /** All items, in catalog order. */
     public static List<Item> all() {
         return ITEMS;
     }
 
-    /** Items whose collection name matches, or everything if {@code collection} is null. */
-    public static List<Item> filter(String collection) {
-        if (collection == null) return ITEMS;
+    public static List<Item> filter(String collectionOrNull) {
+        if (collectionOrNull == null) return ITEMS;
         List<Item> out = new ArrayList<>();
         for (Item it : ITEMS) {
-            if (it.collection.equals(collection)) out.add(it);
+            if (it.collection.equals(collectionOrNull)) out.add(it);
         }
         return out;
     }
@@ -177,5 +225,50 @@ public final class PampGramPortalsCatalog {
             if (it.id.equals(id)) return it;
         }
         return null;
+    }
+
+    // ----- Formatters shared between screens -------------------------------
+
+    /** 469_500_000_000L → "469.5" (drops trailing zeros but keeps up to 2 decimals). */
+    public static String formatGram(long nanoGram) {
+        double g = nanoGram / 1_000_000_000.0;
+        if (Math.abs(g - Math.round(g)) < 0.005) {
+            return String.format(java.util.Locale.ROOT, "%d", Math.round(g));
+        }
+        if (Math.abs(g * 10 - Math.round(g * 10)) < 0.005) {
+            return String.format(java.util.Locale.ROOT, "%.1f", g);
+        }
+        return String.format(java.util.Locale.ROOT, "%.2f", g);
+    }
+
+    /** 15800 → "15.8K", 200000 → "200K", 999 → "999", 1_000_000 → "1M". */
+    public static String formatCompactSupply(int supply) {
+        if (supply >= 1_000_000) {
+            double m = supply / 1_000_000.0;
+            if (Math.abs(m - Math.round(m)) < 0.05) {
+                return String.format(java.util.Locale.ROOT, "%dM", Math.round(m));
+            }
+            return String.format(java.util.Locale.ROOT, "%.1fM", m);
+        }
+        if (supply >= 1000) {
+            double k = supply / 1000.0;
+            if (Math.abs(k - Math.round(k)) < 0.05) {
+                return String.format(java.util.Locale.ROOT, "%dK", Math.round(k));
+            }
+            return String.format(java.util.Locale.ROOT, "%.1fK", k);
+        }
+        return String.valueOf(supply);
+    }
+
+    /** 46950 → "46 950" (NBSP-grouped, matches the Russian format in the UI). */
+    public static String formatStars(long stars) {
+        String s = Long.toString(Math.abs(stars));
+        StringBuilder out = new StringBuilder();
+        int n = s.length();
+        for (int i = 0; i < n; i++) {
+            if (i > 0 && (n - i) % 3 == 0) out.append(' ');
+            out.append(s.charAt(i));
+        }
+        return (stars < 0 ? "-" : "") + out;
     }
 }

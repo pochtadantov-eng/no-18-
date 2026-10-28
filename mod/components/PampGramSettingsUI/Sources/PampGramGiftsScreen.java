@@ -183,8 +183,8 @@ public final class PampGramGiftsScreen extends BaseFragment {
         rows.add(new Row(VIEW_TYPE_TEXT, ROW_RECEIVE_PEER, "Подарок ему",
                 "Отправить визуальный подарок получателю",
                 R.drawable.msg_customize, 0xFF8E44EC));
-        rows.add(new Row(VIEW_TYPE_TEXT, ROW_PORTALS, "Portals",
-                "Витрина уникальных подарков с ценой в TON",
+        rows.add(new Row(VIEW_TYPE_TEXT, ROW_PORTALS, "Portals Market",
+                "Витрина уникальных подарков в GRAM",
                 R.drawable.filled_gram_earnings, 0xFF1AC9FF));
         rows.add(new Row(VIEW_TYPE_TEXT, ROW_MARKET, "Маркет",
                 "Локальная витрина выставленных подарков",
