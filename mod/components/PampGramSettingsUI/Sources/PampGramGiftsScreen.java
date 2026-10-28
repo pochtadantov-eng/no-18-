@@ -66,11 +66,12 @@ public final class PampGramGiftsScreen extends BaseFragment {
     private static final int ROW_HEADER_ACTIONS  = 4;
     private static final int ROW_RECEIVE_SELF    = 5;
     private static final int ROW_RECEIVE_PEER    = 6;
-    private static final int ROW_MARKET          = 7;
-    private static final int ROW_HISTORY         = 8;
-    private static final int ROW_HEADER_COLLECTION = 9;
-    private static final int ROW_COLLECTION_INFO = 10;
-    private static final int ROW_FOOTER          = 11;
+    private static final int ROW_PORTALS         = 7;
+    private static final int ROW_MARKET          = 8;
+    private static final int ROW_HISTORY         = 9;
+    private static final int ROW_HEADER_COLLECTION = 10;
+    private static final int ROW_COLLECTION_INFO = 11;
+    private static final int ROW_FOOTER          = 12;
 
     private static final int VIEW_TYPE_HEADER = 0;
     private static final int VIEW_TYPE_TEXT   = 1;
@@ -182,6 +183,9 @@ public final class PampGramGiftsScreen extends BaseFragment {
         rows.add(new Row(VIEW_TYPE_TEXT, ROW_RECEIVE_PEER, "Подарок ему",
                 "Отправить визуальный подарок получателю",
                 R.drawable.msg_customize, 0xFF8E44EC));
+        rows.add(new Row(VIEW_TYPE_TEXT, ROW_PORTALS, "Portals",
+                "Витрина уникальных подарков с ценой в TON",
+                R.drawable.filled_gram_earnings, 0xFF1AC9FF));
         rows.add(new Row(VIEW_TYPE_TEXT, ROW_MARKET, "Маркет",
                 "Локальная витрина выставленных подарков",
                 R.drawable.msg_colors, 0xFFFF9500));
@@ -238,6 +242,9 @@ public final class PampGramGiftsScreen extends BaseFragment {
                 break;
             case ROW_RECEIVE_PEER:
                 presentFragment(new PampGramGiftComposeScreen(PampGramGiftComposeScreen.MODE_PEER));
+                break;
+            case ROW_PORTALS:
+                presentFragment(new PampGramPortalsScreen());
                 break;
             case ROW_MARKET:
                 showComingSoon(row.title);
